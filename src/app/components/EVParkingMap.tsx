@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Map, Marker, Overlay } from 'pigeon-maps';
+import { Map, Overlay } from 'pigeon-maps';
 
 export interface CarPark {
   id: string;
@@ -211,20 +211,18 @@ export function EVParkingMap() {
   const [hoveredCarpark, setHoveredCarpark] = useState<CarPark | null>(null);
 
   return (
-    <div className="relative w-full h-full">
+    <div className="absolute inset-0">
       <Map 
         defaultCenter={[1.3521, 103.8198]} 
         defaultZoom={12}
-        height="100%"
-        width="100%"
       >
         {mockCarParks.map((carpark) => (
-          <Marker
+          <Overlay
             key={carpark.id}
             anchor={[carpark.lat, carpark.lng]}
           >
             <CustomMarker carpark={carpark} onHover={setHoveredCarpark} />
-          </Marker>
+          </Overlay>
         ))}
         
         {hoveredCarpark && (
