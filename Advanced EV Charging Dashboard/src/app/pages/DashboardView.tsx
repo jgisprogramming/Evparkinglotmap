@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend,
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar
+  AreaChart, Area, XAxis, YAxis, CartesianGrid
 } from "recharts";
 import { MapPin, DollarSign, Activity, Wrench, BatteryCharging, AlertTriangle, Loader2, ChevronLeft } from "lucide-react";
 import { getLtaMockApiDataFromCsv, LTA_Station, generateTrendData } from "../data/mockData";
@@ -73,21 +73,44 @@ export default function DashboardView() {
     return 4500 + ((hash * 123) % 6000); 
   }, [selectedStation]);
 
-  const { chartData, fullDayChartData, overallOccupancyPercent } = useMemo(() => {
-    if (!selectedStation) return { chartData: [], fullDayChartData: [], overallOccupancyPercent: 0 };
+  const { chartSegments, fullDayChartData, overallOccupancyPercent } = useMemo(() => {
+    if (!selectedStation) return { chartSegments: [], fullDayChartData: [], overallOccupancyPercent: 0 };
+    
     const hourlyData = generateTrendData(selectedStation.locationId, totalPlugs, outOfServiceCount);
     const fullDayChartDataFormatted = [...hourlyData];
+    
     const isPeakHour = (h: number) => (h >= 8 && h <= 10) || (h >= 17 && h <= 20);
-    const chartDataFormatted = hourlyData.filter(d => {
-      if (occupancyTab === "peak") return isPeakHour(d.hour);
-      if (occupancyTab === "off-peak") return !isPeakHour(d.hour);
-      return true;
+    
+    const segments: any[][] = [];
+    let currentSegment: any[] = [];
+
+    // Logic to split continuous hours into separate segments
+    hourlyData.forEach((d) => {
+      const match = occupancyTab === "total" 
+        ? true 
+        : occupancyTab === "peak" ? isPeakHour(d.hour) : !isPeakHour(d.hour);
+
+      if (match) {
+        // Check if this hour is continuous with the previous one in the segment
+        if (currentSegment.length > 0 && d.hour !== currentSegment[currentSegment.length - 1].hour + 1) {
+          segments.push(currentSegment);
+          currentSegment = [];
+        }
+        currentSegment.push(d);
+      } else if (currentSegment.length > 0) {
+        segments.push(currentSegment);
+        currentSegment = [];
+      }
     });
-    const aggOcc = chartDataFormatted.reduce((acc, curr) => acc + curr.occ, 0);
-    const aggAvail = chartDataFormatted.reduce((acc, curr) => acc + curr.avail, 0);
+    if (currentSegment.length > 0) segments.push(currentSegment);
+
+    // Calculate overall occupancy across all filtered data
+    const allFilteredData = segments.flat();
+    const aggOcc = allFilteredData.reduce((acc, curr) => acc + curr.occ, 0);
+    const aggAvail = allFilteredData.reduce((acc, curr) => acc + curr.avail, 0);
     const overallPercent = (aggOcc + aggAvail) === 0 ? 0 : (aggOcc / (aggOcc + aggAvail)) * 100;
 
-    return { chartData: chartDataFormatted, fullDayChartData: fullDayChartDataFormatted, overallOccupancyPercent: overallPercent };
+    return { chartSegments: segments, fullDayChartData: fullDayChartDataFormatted, overallOccupancyPercent: overallPercent };
   }, [selectedStation, occupancyTab, totalPlugs, outOfServiceCount]);
 
   if (isLoading) {
@@ -205,18 +228,32 @@ export default function DashboardView() {
                 <span className="text-gray-900 text-[15px] font-semibold tracking-tight">Out of Operation Trend (24h)</span>
               </div>
               <div className="flex-1 w-full min-w-0">
+                {/* ── REPLACED BARCHART WITH STEP AREA CHART ── */}
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={fullDayChartData} margin={{ top: 0, right: 10, left: -25, bottom: 0 }}>
+                  <AreaChart data={fullDayChartData} margin={{ top: 0, right: 10, left: -25, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorOos" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} />
                     <XAxis dataKey="time" stroke="#a3a3a3" fontSize={11} tickLine={false} axisLine={false} minTickGap={20} tickMargin={10} />
                     <YAxis stroke="#a3a3a3" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
                     <RechartsTooltip 
-                      cursor={{ fill: '#f9fafb' }}
+                      cursor={{ stroke: '#a3a3a3', strokeWidth: 1, strokeDasharray: '3 3' }}
                       contentStyle={{ backgroundColor: '#ffffff', borderColor: '#eaeaea', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}
                       formatter={(value: number) => [value, 'Offline Plugs']}
                     />
-                    <Bar dataKey="outOfService" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                  </BarChart>
+                    <Area 
+                      type="step" 
+                      dataKey="outOfService" 
+                      stroke="#ef4444" 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorOos)" 
+                    />
+                  </AreaChart>
                 </ResponsiveContainer>
               </div>
             </div>
@@ -257,33 +294,52 @@ export default function DashboardView() {
                 </span>
               </div>
 
+              {/* ── SEGMENTED CHARTS CONTAINER ── */}
               <div className="flex-1 w-full min-w-0">
                 <div className="w-full overflow-x-auto overflow-y-hidden pb-2" style={{ WebkitOverflowScrolling: "touch" }}>
-                  <div style={{ minWidth: "800px", height: "260px", width: "100%" }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="colorOcc" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#171717" stopOpacity={0.08}/>
-                            <stop offset="95%" stopColor="#171717" stopOpacity={0}/>
-                          </linearGradient>
-                          <linearGradient id="colorPred" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#64748b" stopOpacity={0.08}/>
-                            <stop offset="95%" stopColor="#64748b" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} />
-                        <XAxis dataKey="time" stroke="#a3a3a3" fontSize={11} tickLine={false} axisLine={false} minTickGap={20} tickMargin={12} />
-                        <YAxis stroke="#a3a3a3" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(val) => `${val}%`} />
-                        <RechartsTooltip 
-                          contentStyle={{ backgroundColor: '#ffffff', borderColor: '#eaeaea', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}
-                          formatter={(value: number, name: string) => [`${value.toFixed(1)}%`, name]}
-                        />
-                        <Legend verticalAlign="top" align="right" height={36} iconType="plainline" wrapperStyle={{ fontSize: "12px", color: "#737373" }} />
-                        <Area type="monotone" dataKey="predictedRate" name="Predicted Rate" stroke="#64748b" strokeWidth={2} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorPred)" />
-                        <Area type="monotone" dataKey="occupancyRate" name="Actual Rate" stroke="#171717" strokeWidth={2.5} fillOpacity={1} fill="url(#colorOcc)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                  <div className="flex w-full" style={{ minWidth: occupancyTab === "total" ? "800px" : "max-content", height: "260px" }}>
+                    {chartSegments.map((segment, index) => (
+                      <React.Fragment key={index}>
+                        {/* Natural separator for time gaps */}
+                        {index > 0 && (
+                          <div className="flex flex-col justify-end items-center pb-[24px] px-3 shrink-0">
+                            <span className="text-gray-300 font-bold tracking-widest leading-none select-none">...</span>
+                          </div>
+                        )}
+                        
+                        <div className="flex-1 flex flex-col min-w-[250px] relative">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={segment} margin={{ top: 20, right: 10, left: -25, bottom: 0 }}>
+                              <defs>
+                                <linearGradient id={`colorOcc-${index}`} x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#111827" stopOpacity={0.25}/>
+                                  <stop offset="95%" stopColor="#111827" stopOpacity={0}/>
+                                </linearGradient>
+                                <linearGradient id={`colorPred-${index}`} x1="0" y1="0" x2="0" y2="1">
+                                  {/* Reduced fill opacity for predicted rate */}
+                                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.05}/>
+                                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} />
+                              <XAxis dataKey="time" stroke="#a3a3a3" fontSize={11} tickLine={false} axisLine={false} minTickGap={20} tickMargin={12} />
+                              <YAxis stroke="#a3a3a3" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(val) => `${val}%`} />
+                              <RechartsTooltip 
+                                contentStyle={{ backgroundColor: '#ffffff', borderColor: '#eaeaea', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}
+                                formatter={(value: number, name: string) => [`${value.toFixed(1)}%`, name]}
+                              />
+                              {/* Render legend only on the first segment so it doesn't duplicate */}
+                              {index === 0 && (
+                                <Legend verticalAlign="top" align="right" height={36} iconType="plainline" wrapperStyle={{ fontSize: "12px", color: "#737373", marginTop: "-10px" }} />
+                              )}
+                              {/* Added strokeOpacity to fade out the predicted line */}
+                              <Area type="monotone" dataKey="predictedRate" name="Predicted Rate" stroke="#3b82f6" strokeWidth={2} strokeOpacity={0.4} strokeDasharray="4 4" fillOpacity={1} fill={`url(#colorPred-${index})`} />
+                              <Area type="monotone" dataKey="occupancyRate" name="Actual Rate" stroke="#111827" strokeWidth={3} fillOpacity={1} fill={`url(#colorOcc-${index})`} />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </React.Fragment>
+                    ))}
                   </div>
                 </div>
               </div>
